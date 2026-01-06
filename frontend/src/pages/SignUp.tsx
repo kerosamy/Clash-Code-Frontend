@@ -14,6 +14,8 @@ import {
   validateRecoveryAnswer
 } from "../utils/validation";
 import { API_BASE } from '../services/api';
+import logo from '../assets/logo.svg';
+import googleIcon from '../assets/google-icon-1.png';
 
 export default function SignUp() {
   const [formData, setFormData] = useState({
@@ -122,7 +124,7 @@ export default function SignUp() {
 
       <div className="bg-container p-8 rounded-button shadow-lg w-full max-w-md text-white relative z-10">
         <div className="flex justify-center mb-6">
-          <img src="/src/assets/logo.svg" alt="App Logo" className="w-48" />
+          <img src={logo} alt="App Logo" className="w-48" />
         </div>
 
         {/* Global error banner (only shows if error isn't specific to username/email) */}
@@ -201,7 +203,7 @@ export default function SignUp() {
           className="flex items-center justify-center gap-2 bg-background border border-gray-600 py-2 rounded-button w-full hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <img
-            src="/src/assets/google-icon-1.png"
+            src={googleIcon}
             alt="Google Icon"
             className="w-7 h-7"
           />
