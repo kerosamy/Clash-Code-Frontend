@@ -11,7 +11,7 @@ import { searchOpponent, cancelOpponentSearch, getMatchSubmissionLog, getOnGoing
 import { getUsername } from "../../utils/jwtDecoder";
 import { setActiveMatch } from "../../utils/matchState";
 import { useWebSocket } from "../../contexts/WebSocketContext";
-
+import logo from '../../assets/logo.svg';
 interface UserStats {
     currentRate: number;
     currentRank: RANKS;
@@ -295,7 +295,7 @@ export default function PlayGameHome() {
 
                 <div className="px-4 py-16">
                     <div className="flex justify-center">
-                        <img src="/src/assets/logo.svg" alt="App Logo" className="w-[900px] h-auto" />
+                        <img src={logo} alt="App Logo" className="w-[900px] h-auto" />
                     </div>
                 </div>
 
