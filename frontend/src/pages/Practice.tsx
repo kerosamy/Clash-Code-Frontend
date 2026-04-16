@@ -10,7 +10,6 @@ import { DifficultyLevel } from "../enums/DifficultyLevel";
 import SearchBar from "../components/common/SearchBar";
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import LogoLoader from "../components/Loader/LogoLoader";
 import { waitForLoader } from "../components/Loader/WaitLoader";
 
 export default function Practice() {
@@ -21,12 +20,10 @@ export default function Practice() {
   const [maxDifficulty, setMaxDifficulty] = useState<number>(DifficultyLevel.HARD_MAX);
   const [page, setPage] = useState(0);
   const [totalPages, setTotalPages] = useState(1); // total pages from backend
-  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   // load problems filtered or unfiltered
   async function loadProblems(pageToLoad = 0) {
-    setLoading(true);
     const startTime = Date.now();
 
     try {
@@ -61,9 +58,7 @@ export default function Practice() {
       setTotalPages(backendPage.totalPages);
     } catch (err) {
       console.error("Failed to fetch problems", err);
-    } finally {
-      setLoading(false);
-    }
+    } 
   }
 
   useEffect(() => {
