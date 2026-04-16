@@ -83,13 +83,7 @@ export default function Practice() {
     if (page < totalPages - 1) loadProblems(page + 1);
   };
 
-  if (loading) {
-    return(
-      <div className="flex flex-col h-screen font-anta">
-        <LogoLoader loadingMessage="Loading Problems" />
-      </div>
-    );
-  }
+
 
   return (
     <div className="flex flex-col h-[90vh] space-y-4 p-scroll-x">
