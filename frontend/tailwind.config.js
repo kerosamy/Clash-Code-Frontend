@@ -60,7 +60,7 @@ export default {
 
       // FIXED SIDEBAR WIDTH (stable + elegant)
       width: {
-        sidebar: "240px",
+        sidebar: "15%",
         icon: "1.5rem",
       },
       minWidth: {

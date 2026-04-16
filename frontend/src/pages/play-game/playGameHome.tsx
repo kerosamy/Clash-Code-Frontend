@@ -11,7 +11,9 @@ import { searchOpponent, cancelOpponentSearch, getMatchSubmissionLog, getOnGoing
 import { getUsername } from "../../utils/jwtDecoder";
 import { setActiveMatch } from "../../utils/matchState";
 import { useWebSocket } from "../../contexts/WebSocketContext";
+import LogoLoader from "../../components/Loader/LogoLoader"; // ✅ added
 import logo from '../../assets/logo.svg';
+
 interface UserStats {
     currentRate: number;
     currentRank: RANKS;
@@ -35,7 +37,7 @@ interface MatchData {
 
 export default function PlayGameHome() {
     const navigate = useNavigate();
-    const { notifications } = useWebSocket(); // CHANGED: Only get notifications, don't subscribe
+    const { notifications } = useWebSocket();
     const [isFriendMatchingOpen, setIsFriendMatchingOpen] = useState<boolean>(false);
     const [isMatchmaking, setIsMatchmaking] = useState<boolean>(false);
     const [matchType, setMatchType] = useState<"opponent" | "friend">("opponent");
@@ -45,7 +47,7 @@ export default function PlayGameHome() {
     const [pendingNotificationId, setPendingNotificationId] = useState<number | undefined>();
     const [userStats, setUserStats] = useState<UserStats>({
         currentRate: 0,
-        currentRank: RANKS.BRONZE, 
+        currentRank: RANKS.BRONZE,
         nextRankInfo: {
             nextRate: 0,
             nextRank: RANKS.BRONZE as RANKS | "MAX" | null,
@@ -53,19 +55,17 @@ export default function PlayGameHome() {
             isMaxRank: false
         }
     });
-    const [isLoading, setIsLoading] = useState<boolean>(true);
-    
+    const [isLoading, setIsLoading] = useState<boolean>(true); // ✅ drives the loader
+
     const isMatchmakingRef = useRef(false);
-    
+
     useEffect(() => {
         isMatchmakingRef.current = isMatchmaking;
     }, [isMatchmaking]);
 
-    // Combined initial data fetch - Check ongoing match FIRST, then fetch user data
     useEffect(() => {
         const initializeData = async () => {
             try {
-                // Check for ongoing match first
                 const currentUser = getUsername();
                 if (!currentUser) {
                     setIsLoading(false);
@@ -73,10 +73,8 @@ export default function PlayGameHome() {
                 }
 
                 const matchId = await getOnGoingMatch();
-                console.log('Ongoing match check:', matchId);
-                
+
                 if (matchId) {
-                    console.log('Found ongoing match, fetching details...');
                     const [data, match] = await Promise.all([
                         getMatchSubmissionLog(matchId),
                         getMatchDetails(matchId)
@@ -105,13 +103,12 @@ export default function PlayGameHome() {
                     });
 
                     setShowIntroAnimation(true);
-                    return; // Don't load other data if we're showing animation
+                    return;
                 }
 
-                // No ongoing match, fetch user profile
                 const profile = await fetchMyProfile();
                 const nextRankInfo = calculateNextRate(profile.currentRate);
-                
+
                 setUserStats({
                     currentRate: profile.currentRate,
                     currentRank: profile.rank as RANKS,
@@ -120,14 +117,13 @@ export default function PlayGameHome() {
             } catch (error) {
                 console.error("Failed to initialize data", error);
             } finally {
-                setIsLoading(false);
+                setIsLoading(false); // ✅ always hides loader when done
             }
         };
 
         initializeData();
     }, []);
 
-    // CHANGED: Listen to notifications from context instead of subscribing directly
     useEffect(() => {
         const matchStartedNotification = notifications.find(
             n => n.metadata?.notificationType === 'MATCH_STARTED' && !n.read
@@ -137,7 +133,6 @@ export default function PlayGameHome() {
             const handleMatchStarted = async () => {
                 try {
                     const payload = matchStartedNotification.metadata;
-                    console.log('Match started notification:', payload);
                     const data = await getMatchSubmissionLog(payload.matchId);
 
                     const currentUser = getUsername();
@@ -175,7 +170,6 @@ export default function PlayGameHome() {
         }
     }, [notifications]);
 
-    // Cleanup on unmount
     useEffect(() => {
         return () => {
             if (isMatchmakingRef.current) {
@@ -187,7 +181,6 @@ export default function PlayGameHome() {
     const handleAnimationComplete = () => {
         if (matchData) {
             setActiveMatch(matchData.matchId.toString());
-            
             navigate(`/play-game/${matchData.matchId}`, {
                 state: { problemId: matchData.problemId }
             });
@@ -203,7 +196,6 @@ export default function PlayGameHome() {
         setIsMatchmaking(true);
         try {
             await searchOpponent();
-            console.log('Started searching for opponent');
         } catch (error) {
             console.error("Failed to start opponent search", error);
             setIsMatchmaking(false);
@@ -216,7 +208,6 @@ export default function PlayGameHome() {
         setPendingNotificationId(undefined);
         try {
             await cancelOpponentSearch();
-            console.log('Cancelled opponent search');
         } catch (error) {
             console.error("Failed to cancel opponent search", error);
         }
@@ -230,6 +221,15 @@ export default function PlayGameHome() {
         setIsFriendMatchingOpen(false);
     };
 
+    // ✅ Same pattern as LeaderBoard & Practice
+    if (isLoading) {
+        return (
+            <div className="flex flex-col h-screen font-anta">
+                <LogoLoader loadingMessage="Loading" />
+            </div>
+        );
+    }
+
     if (showIntroAnimation && matchData) {
         return (
             <MatchIntroAnimation
@@ -242,7 +242,7 @@ export default function PlayGameHome() {
 
     if (isMatchmaking) {
         return (
-            <LoadingMatch 
+            <LoadingMatch
                 matchType={matchType}
                 invitedUser={invitedUser}
                 notificationId={pendingNotificationId}
@@ -257,38 +257,24 @@ export default function PlayGameHome() {
                 <div className="flex items-center justify-center gap-24 pt-8 pb-4 px-4">
                     <div className="text-center">
                         <div className="text-3xl text-gray-300 mb-3 font-anta">Current Rate</div>
-                        <div 
-                            className="text-6xl font-bold font-anta"
-                            style={{ color: currentRankColor }}
-                        >
-                            {isLoading ? "..." : userStats.currentRate}
+                        <div className="text-6xl font-bold font-anta" style={{ color: currentRankColor }}>
+                            {userStats.currentRate}
                         </div>
                     </div>
-                    
+
                     <div className="text-center">
                         <div className="text-3xl text-gray-300 mb-3 font-anta">Current Rank</div>
-                        <div 
-                            className="text-6xl font-bold font-anta"
-                            style={{ color: currentRankColor }}
-                        >
-                            {isLoading ? "..." : userStats.currentRank}
+                        <div className="text-6xl font-bold font-anta" style={{ color: currentRankColor }}>
+                            {userStats.currentRank}
                         </div>
                     </div>
-                    
+
                     <div className="text-center">
                         <div className="text-3xl text-gray-300 mb-2 font-anta">
                             {userStats.nextRankInfo.isMaxRank ? "Max Rank!" : "Points to Next Rank"}
                         </div>
-                        <div 
-                            className="text-6xl font-bold font-anta"
-                            style={{ color: userStats.nextRankInfo.nextRankColor }}
-                        >
-                            {isLoading 
-                                ? "..." 
-                                : userStats.nextRankInfo.isMaxRank 
-                                    ? "🏆" 
-                                    : userStats.nextRankInfo.nextRate
-                            }
+                        <div className="text-6xl font-bold font-anta" style={{ color: userStats.nextRankInfo.nextRankColor }}>
+                            {userStats.nextRankInfo.isMaxRank ? "🏆" : userStats.nextRankInfo.nextRate}
                         </div>
                     </div>
                 </div>
@@ -303,28 +289,14 @@ export default function PlayGameHome() {
                     <div className="flex flex-col gap-8">
                         <button
                             onClick={handleOpponentMatching}
-                            className="
-                                flex items-center justify-center
-                                border border-cyan-500/30 bg-cyan-500/5 text-cyan-500
-                                hover:bg-cyan-500 hover:text-white hover:border-cyan-500 hover:shadow-[0_0_15px_rgba(6,182,212,0.4)]
-                                px-8 py-4 rounded-full 
-                                font-anta text-2xl uppercase tracking-widest 
-                                transition-all duration-300
-                            "
+                            className="flex items-center justify-center border border-cyan-500/30 bg-cyan-500/5 text-cyan-500 hover:bg-cyan-500 hover:text-white hover:border-cyan-500 hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] px-8 py-4 rounded-full font-anta text-2xl uppercase tracking-widest transition-all duration-300"
                         >
                             Opponent Matching
                         </button>
-                        
+
                         <button
                             onClick={() => setIsFriendMatchingOpen(true)}
-                            className="
-                                flex items-center justify-center
-                                border border-emerald-500/30 bg-emerald-500/5 text-emerald-500
-                                hover:bg-emerald-500 hover:text-white hover:border-emerald-500 hover:shadow-[0_0_15px_rgba(16,185,129,0.4)]
-                                px-8 py-4 rounded-full 
-                                font-anta text-2xl uppercase tracking-widest 
-                                transition-all duration-300
-                            "
+                            className="flex items-center justify-center border border-emerald-500/30 bg-emerald-500/5 text-emerald-500 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 hover:shadow-[0_0_15px_rgba(16,185,129,0.4)] px-8 py-4 rounded-full font-anta text-2xl uppercase tracking-widest transition-all duration-300"
                         >
                             Friend Matching
                         </button>
@@ -332,7 +304,7 @@ export default function PlayGameHome() {
                 </div>
             </div>
 
-            <FriendMatchingPopUp 
+            <FriendMatchingPopUp
                 isOpen={isFriendMatchingOpen}
                 onClose={() => setIsFriendMatchingOpen(false)}
                 onInvite={handleFriendInvite}

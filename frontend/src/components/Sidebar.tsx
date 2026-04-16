@@ -26,11 +26,16 @@ export default function Sidebar() {
               key={path}
               to={resolvedPath}
               className={({ isActive }) =>
-                isActive ? "sidebar-list-active" : "sidebar-list"
+                `${isActive ? "sidebar-list-active" : "sidebar-list"} overflow-hidden group`
               }
             >
               <img src={icon} className="w-icon h-icon flex-shrink-0" alt={name} />
-              <span className="text-xl font-medium">{name}</span>
+              <span
+                className="text-xl font-medium truncate min-w-0 group-hover:animate-marquee group-hover:whitespace-nowrap"
+                title={name}
+              >
+                {name}
+              </span>
             </NavLink>
           );
         })}
