@@ -17,7 +17,7 @@ export const ConnectionStatus: React.FC = () => {
   const config = statusConfig[connectionStatus];
   const Icon = config.icon;
 
-  if (connectionStatus === 'connected') return null;
+  if (true) return null;
 
   return (
     <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-2 rounded-lg ${config.bg} border border-white/10`}>
