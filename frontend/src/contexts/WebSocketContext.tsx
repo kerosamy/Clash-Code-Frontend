@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
-import { EnhancedWebSocketService, type ConnectionStatus } from '../services/ws.ts';
+import { wsService, type ConnectionStatus } from '../services/ws';
 import { getUsername } from '../utils/jwtDecoder';
 
 export interface GlobalNotification {
@@ -29,87 +29,105 @@ const WebSocketContext = createContext<WebSocketContextType | undefined>(undefin
 export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [notifications, setNotifications] = useState<GlobalNotification[]>([]);
-  const wsService = useRef(new EnhancedWebSocketService());
+
+  // Use a ref to track processed message IDs for deduplication
   const processedMessageIds = useRef(new Set<string>());
 
-  const handleWebSocketMessage = useCallback((message: any) => {
-    // Create unique ID for deduplication based on message content
-    const messageId = `${message.notificationType}-${message.matchId || ''}-${message.senderUsername || ''}-${message.submissionStatus || ''}-${Math.floor(Date.now() / 1000)}`;
-    
-    // Skip if already processed (within same second)
+  // ─── 1. Connect once on mount using the shared singleton ──────────────────
+  // wsService is a module-level singleton so remounts don't create a new instance.
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const user = getUsername();
+
+    if (!token || token === 'undefined' || !user) return;
+
+    // onMessage is NOT passed here — messages are handled only inside subscribe()
+    // to avoid the double-handling bug.
+    wsService.connect(token, setConnectionStatus, () => {});
+
+    return () => {
+      wsService.disconnect();
+      processedMessageIds.current.clear();
+    };
+  }, []); // runs once on mount
+
+  // ─── 2. Subscribe when connected, re-subscribe after reconnects ───────────
+  // Watching connectionStatus means this re-runs every time we reconnect,
+  // which re-establishes the subscription automatically after a drop.
+  useEffect(() => {
+    if (connectionStatus !== 'connected') return;
+
+    const user = getUsername();
+    if (!user) return;
+
+    console.log('🔌 Subscribing to notifications for:', user);
+
+    const unsub = wsService.subscribe(`/topic/match-pop/${user}`, (payload) => {
+      console.log('📬 Received:', payload.notificationType);
+      handleWebSocketMessage(payload);
+    });
+
+    // Cleanup unsubscribes when status changes away from 'connected'
+    return () => unsub?.();
+  }, [connectionStatus]);
+
+  // ─── 3. Message handler (stable, no deps) ────────────────────────────────
+  const handleWebSocketMessage = (message: any) => {
+    // Use server-provided ID if available, else build a unique key
+    const messageId: string =
+      message.id ??
+      `${message.notificationType}-${message.matchId ?? ''}-${message.senderUsername ?? ''}-${Date.now()}`;
+
     if (processedMessageIds.current.has(messageId)) {
-      console.log('🚫 Skipping duplicate message:', messageId);
+      console.log('🚫 Skipping duplicate:', messageId);
       return;
     }
-    
+
     processedMessageIds.current.add(messageId);
-    
-    // Clean up old IDs (keep only last 100)
+
+    // Keep the dedup set from growing forever
     if (processedMessageIds.current.size > 100) {
       const entries = Array.from(processedMessageIds.current);
       entries.slice(0, 50).forEach(id => processedMessageIds.current.delete(id));
     }
 
     const notification = mapWebSocketMessageToNotification(message);
-    if (notification) {
-      setNotifications(prev => {
-        // Additional check: don't add if same notification already exists recently
-        const isDuplicate = prev.some(n => 
-          n.title === notification.title && 
+    if (!notification) return;
+
+    setNotifications(prev => {
+      // Secondary guard: skip if identical notification arrived within 2 s
+      const isDuplicate = prev.some(
+        n =>
+          n.title === notification.title &&
           n.message === notification.message &&
-          Date.now() - n.timestamp.getTime() < 2000 // within 2 seconds
-        );
-        
-        if (isDuplicate) {
-          console.log('🚫 Duplicate notification detected in state, skipping');
-          return prev;
-        }
-        
-        console.log('✅ Adding new notification:', notification.title);
-        return [notification, ...prev].slice(0, 50);
-      });
-    }
-  }, []);
+          Date.now() - n.timestamp.getTime() < 2000
+      );
 
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    const user = getUsername();
-    
-    if (!token || token === 'undefined' || !user) {
-      return;
-    }
-
-    wsService.current.connect(token, setConnectionStatus, handleWebSocketMessage);
-
-    // ONLY subscribe once here in the context - this is the single source of truth
-    setTimeout(() => {
-      if (wsService.current.isConnected() && user) {
-        console.log('🔌 Subscribing to notifications for:', user);
-        wsService.current.subscribe(`/topic/match-pop/${user}`, (payload) => {
-          console.log('📬 WebSocket message received:', payload.notificationType);
-          // Messages are already handled by handleWebSocketMessage in connect
-        });
+      if (isDuplicate) {
+        console.log('🚫 Duplicate in state, skipping');
+        return prev;
       }
-    }, 1000);
 
-    return () => {
-      wsService.current.disconnect();
-      processedMessageIds.current.clear();
-    };
-  }, [handleWebSocketMessage]);
+      console.log('✅ Adding notification:', notification.title);
+      return [notification, ...prev].slice(0, 50);
+    });
+  };
 
-  const subscribe = useCallback((destination: string, callback: (payload: any) => void) => {
-    return wsService.current.subscribe(destination, callback);
-  }, []);
+  // ─── 4. Expose subscribe / send through context ───────────────────────────
+  // Components that need their own topic can call these directly.
+  const subscribe = useCallback(
+    (destination: string, callback: (payload: any) => void) =>
+      wsService.subscribe(destination, callback),
+    []
+  );
 
   const send = useCallback((destination: string, body: any) => {
-    wsService.current.send(destination, body);
+    wsService.send(destination, body);
   }, []);
 
+  // ─── 5. Notification management ───────────────────────────────────────────
   const markAsRead = useCallback((id: string) => {
-    setNotifications(prev => 
-      prev.map(n => n.id === id ? { ...n, read: true } : n)
-    );
+    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
   }, []);
 
   const markAllAsRead = useCallback(() => {
@@ -120,24 +138,24 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setNotifications(prev => prev.filter(n => n.id !== id));
   }, []);
 
-  const clearAll = useCallback(() => {
-    setNotifications([]);
-  }, []);
+  const clearAll = useCallback(() => setNotifications([]), []);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
-    <WebSocketContext.Provider value={{
-      connectionStatus,
-      notifications,
-      unreadCount,
-      subscribe,
-      send,
-      markAsRead,
-      markAllAsRead,
-      removeNotification,
-      clearAll
-    }}>
+    <WebSocketContext.Provider
+      value={{
+        connectionStatus,
+        notifications,
+        unreadCount,
+        subscribe,
+        send,
+        markAsRead,
+        markAllAsRead,
+        removeNotification,
+        clearAll,
+      }}
+    >
       {children}
     </WebSocketContext.Provider>
   );
@@ -145,84 +163,49 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
 export const useWebSocket = () => {
   const context = useContext(WebSocketContext);
-  if (!context) {
-    throw new Error('useWebSocket must be used within WebSocketProvider');
-  }
+  if (!context) throw new Error('useWebSocket must be used within WebSocketProvider');
   return context;
 };
 
+// ─── Message → Notification mapper ────────────────────────────────────────────
 function mapWebSocketMessageToNotification(message: any): GlobalNotification | null {
-  const baseNotification: Partial<GlobalNotification> = {
+  const base: Omit<GlobalNotification, 'type' | 'title' | 'message'> = {
     id: `${Date.now()}-${Math.random()}`,
     timestamp: new Date(),
     read: false,
-    metadata: message
+    metadata: message,
   };
 
   switch (message.notificationType) {
     case 'MATCH_STARTED':
-      return {
-        ...baseNotification,
-        type: 'success',
-        title: 'Match Started!',
-        message: 'Your match has begun. Good luck!',
-      } as GlobalNotification;
+      return { ...base, type: 'success', title: 'Match started!', message: 'Your match has begun. Good luck!' };
 
     case 'MATCH_COMPLETED':
-      return {
-        ...baseNotification,
-        type: 'info',
-        title: 'Match Completed',
-        message: 'The match has ended. Check your results!',
-      } as GlobalNotification;
+      return { ...base, type: 'info', title: 'Match completed', message: 'The match has ended. Check your results!' };
 
     case 'USER_RESIGNED':
-      return {
-        ...baseNotification,
-        type: 'success',
-        title: 'Opponent Resigned',
-        message: `${message.senderUsername} has resigned from the match.`,
-      } as GlobalNotification;
+      return { ...base, type: 'success', title: 'Opponent resigned', message: `${message.senderUsername} has resigned from the match.` };
 
     case 'SUBMISSION_RECEIVED':
-      return {
-        ...baseNotification,
-        type: 'info',
-        title: 'Code Submitted',
-        message: `${message.senderUsername} submitted a solution`,
-      } as GlobalNotification;
+      return { ...base, type: 'info', title: 'Code submitted', message: `${message.senderUsername} submitted a solution` };
 
-    case 'SUBMISSION_RESULT':
-      { const isSuccess = message.submissionStatus === 'ACCEPTED';
+    case 'SUBMISSION_RESULT': {
+      const accepted = message.submissionStatus === 'ACCEPTED';
       return {
-        ...baseNotification,
-        type: isSuccess ? 'success' : 'error',
-        title: isSuccess ? 'Solution Accepted' : 'Submission Failed',
-        message: `${message.senderUsername} ${isSuccess ? 'passed' : 'failed'} ${message.passedCases}/${message.totalCases} test cases`,
-      } as GlobalNotification; }
+        ...base,
+        type: accepted ? 'success' : 'error',
+        title: accepted ? 'Solution accepted' : 'Submission failed',
+        message: `${message.senderUsername} ${accepted ? 'passed' : 'failed'} ${message.passedCases}/${message.totalCases} test cases`,
+      };
+    }
 
     case 'FRIEND_REQUEST_RECEIVED':
-      return {
-        ...baseNotification,
-        type: 'info',
-        title: 'New Friend Request',
-        message: `${message.senderUsername} sent you a friend request`,
-      } as GlobalNotification;
+      return { ...base, type: 'info', title: 'New friend request', message: `${message.senderUsername} sent you a friend request` };
 
     case 'FRIEND_REQUEST_ACCEPTED':
-      return {
-        ...baseNotification,
-        type: 'success',
-        title: 'Friend Request Accepted',
-        message: `${message.accepterUsername} accepted your friend request`,
-      } as GlobalNotification;
+      return { ...base, type: 'success', title: 'Friend request accepted', message: `${message.accepterUsername} accepted your friend request` };
 
     default:
-      return {
-        ...baseNotification,
-        type: 'info',
-        title: message.title || 'Notification',
-        message: message.message || 'You have a new notification',
-      } as GlobalNotification;
+      return { ...base, type: 'info', title: message.title ?? 'Notification', message: message.message ?? 'You have a new notification' };
   }
 }

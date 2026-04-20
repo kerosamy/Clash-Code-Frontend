@@ -1,4 +1,3 @@
-// src/services/websocket.service.ts
 import { Client, type IMessage, type StompSubscription } from '@stomp/stompjs';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'reconnecting';
@@ -6,70 +5,98 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'er
 export class EnhancedWebSocketService {
   private client: Client | null = null;
   private subscriptions: Map<string, StompSubscription> = new Map();
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 5000;
   private statusCallback?: (status: ConnectionStatus) => void;
   private messageCallback?: (message: any) => void;
+  private persistentReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private isManuallyStopped = false;
+  private token: string = '';
 
-  connect(token: string, onStatusChange: (status: ConnectionStatus) => void, onMessage: (msg: any) => void) {
-    if (this.client?.connected) {
-      console.log('WS already connected');
-      return;
-    }
+  private readonly WS_URL = 'wss://fugally-nonrepatriable-belle.ngrok-free.dev/ws';
+  private readonly RECONNECT_DELAY = 5000;
 
+  connect(
+    token: string,
+    onStatusChange: (status: ConnectionStatus) => void,
+    onMessage: (msg: any) => void
+  ) {
+    this.token = token;
     this.statusCallback = onStatusChange;
     this.messageCallback = onMessage;
-    this.statusCallback('connecting');
+    this.isManuallyStopped = false;
+    this._createAndActivate();
+  }
 
-    const WS_URL = 'wss://fugally-nonrepatriable-belle.ngrok-free.dev/ws';
-    // wss://fugally-nonrepatriable-belle.ngrok-free.dev/ws
-    
+  private _createAndActivate() {
+    if (this.isManuallyStopped) return;
+
+    if (this.client) {
+      this.client.deactivate();
+      this.client = null;
+    }
+
+    this.statusCallback?.('connecting');
+
     this.client = new Client({
-      brokerURL: WS_URL,
-      reconnectDelay: this.reconnectDelay,
+      brokerURL: this.WS_URL,
+      reconnectDelay: this.RECONNECT_DELAY,
       heartbeatIncoming: 20000,
       heartbeatOutgoing: 20000,
-      connectHeaders: token ? { Authorization: `Bearer ${token}` } : {},
-      
+      connectHeaders: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+
       debug: (str) => {
         if (str.includes('ERROR')) console.error('STOMP:', str);
       },
 
       onConnect: () => {
-        console.log('✅ WebSocket connected successfully');
-        this.reconnectAttempts = 0;
+        console.log('✅ WebSocket connected');
+        this._clearPersistentTimer();
         this.statusCallback?.('connected');
       },
 
       onDisconnect: () => {
         console.log('❌ WebSocket disconnected');
-        this.statusCallback?.('disconnected');
         this.subscriptions.clear();
+        this.statusCallback?.('disconnected');
       },
 
       onStompError: (frame) => {
         console.error('❌ STOMP error:', frame.headers['message']);
         this.statusCallback?.('error');
-        
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.reconnectAttempts++;
-          this.statusCallback?.('reconnecting');
-        }
+        this._schedulePersistentReconnect();
       },
 
-      onWebSocketError: (event) => {
-        console.error('❌ WebSocket error:', event);
-        this.statusCallback?.('error');
-      }
+      onWebSocketError: () => {
+        console.error('❌ WebSocket error — will retry');
+        this.statusCallback?.('reconnecting');
+        this._schedulePersistentReconnect();
+      },
     });
 
     this.client.activate();
   }
 
+  private _schedulePersistentReconnect() {
+    if (this.isManuallyStopped || this.persistentReconnectTimer) return;
+
+    console.log(`🔄 Reconnecting in ${this.RECONNECT_DELAY / 1000}s...`);
+    this.statusCallback?.('reconnecting');
+
+    this.persistentReconnectTimer = setTimeout(() => {
+      this.persistentReconnectTimer = null;
+      this._createAndActivate();
+    }, this.RECONNECT_DELAY);
+  }
+
+  private _clearPersistentTimer() {
+    if (this.persistentReconnectTimer) {
+      clearTimeout(this.persistentReconnectTimer);
+      this.persistentReconnectTimer = null;
+    }
+  }
+
   subscribe(destination: string, callback: (payload: any) => void): (() => void) | undefined {
-    if (!this.client || !this.client.connected) {
-      console.warn('⚠️ Cannot subscribe: WS not connected');
+    if (!this.client?.connected) {
+      console.warn('⚠️ Cannot subscribe: not connected');
       return undefined;
     }
 
@@ -79,7 +106,7 @@ export class EnhancedWebSocketService {
         this.messageCallback?.(payload);
         callback(payload);
       } catch (e) {
-        console.error('❌ Failed to parse WS message:', e);
+        console.error('❌ Failed to parse message:', e);
       }
     });
 
@@ -92,19 +119,17 @@ export class EnhancedWebSocketService {
   }
 
   send(destination: string, body: any) {
-    if (!this.client || !this.client.connected) {
-      console.warn('⚠️ Cannot send: WS not connected');
+    if (!this.client?.connected) {
+      console.warn('⚠️ Cannot send: not connected');
       return;
     }
-
-    this.client.publish({
-      destination,
-      body: JSON.stringify(body)
-    });
+    this.client.publish({ destination, body: JSON.stringify(body) });
   }
 
   disconnect() {
     console.log('Disconnecting WebSocket...');
+    this.isManuallyStopped = true;
+    this._clearPersistentTimer();
     this.subscriptions.forEach(sub => sub.unsubscribe());
     this.subscriptions.clear();
     this.client?.deactivate();
@@ -117,4 +142,6 @@ export class EnhancedWebSocketService {
   }
 }
 
+// Module-level singleton — shared across the entire app.
+// This prevents a new instance being created on every Provider remount.
 export const wsService = new EnhancedWebSocketService();
